@@ -1,4 +1,4 @@
--- [FOX] Shrek Line: Onion Automator + Local File Persistence
+-- [FEXMAX SCRIPT] Shrek Line: Onion Automator + Local File Persistence
 -- Ubicación: StarterPlayer > StarterPlayerScripts
 -- Guarda en archivo local (Delta) y EDITA los contadores reales del juego
 
@@ -122,7 +122,7 @@ local TotalLbl, TimeLbl, StatusLbl
 local function createGUI()
     local ok, gui = pcall(function()
         local sg = Instance.new("ScreenGui")
-        sg.Name = "FOX_OnionHUD"
+        sg.Name = "FEXMAX SHREK LINE SCRIPT"
         sg.ResetOnSpawn = false
         sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         pcall(function() sg.Parent = game:GetService("CoreGui") end)
@@ -140,7 +140,7 @@ local function createGUI()
 
         local t = Instance.new("TextLabel", f)
         t.Size = UDim2.new(1,0,0,28); t.BackgroundTransparency = 1
-        t.Text = "🧅 SHREK LINE AUTOMATOR"
+        t.Text = "🧅 SHREK LINE FEXMAX AUTOMATOR"
         t.TextColor3 = Color3.fromRGB(76,175,80)
         t.Font = Enum.Font.GothamBold; t.TextSize = 13
 
@@ -179,7 +179,7 @@ local function createGUI()
 
         return sg
     end)
-    if not ok then warn("[🧅 FOX] Error creando GUI:", gui) end
+    if not ok then warn("[🧅 FEXMAX SCRIPT] Error creando GUI:", gui) end
 end
 
 -- ==========================================
@@ -258,4 +258,4 @@ end)
 -- Guardar también al respawn (por si acaso)
 player.CharacterAdded:Connect(function() task.wait(1) pushToGame() end)
 
-print("[🧅 FOX] Onion Automator cargado | Archivo:", SAVE_FILE, "| FileAPI:", tostring(hasFileAPI))
+print("[🧅 FEXMAX] Onion Automator cargado | Archivo:", SAVE_FILE, "| FileAPI:", tostring(hasFileAPI))
