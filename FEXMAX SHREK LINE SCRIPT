@@ -1,210 +1,261 @@
--- [FOX] Shrek Line: Ultimate Onion Automator
+-- [FOX] Shrek Line: Onion Automator + Local File Persistence
 -- Ubicación: StarterPlayer > StarterPlayerScripts
+-- Guarda en archivo local (Delta) y EDITA los contadores reales del juego
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local Players        = game:GetService("Players")
+local RunService     = game:GetService("RunService")
+local TweenService   = game:GetService("TweenService")
+local HttpService    = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
-local ONION_INTERVAL = 1 -- Segundos entre cada cebolla
+local ONION_INTERVAL = 1
+local SAVE_FILE      = "FOX_ShrekLine_Onions.json"
+local SAVE_EVERY     = 10 -- segundos entre guardados automáticos
 
 -- ==========================================
--- 1. ESTADO Y REFERENCIAS
+-- 1. ESTADO
 -- ==========================================
 local Stats = {
-    OnionsCollected = 0,
-    StartTime = tick(),
-    LastUpdate = tick()
+    Onions      = 0,
+    StartTime   = tick(),
+    LastUpdate  = tick(),
+    LastSave    = tick(),
 }
 
--- Referencias a las GUIs (se encontrarán dinámicamente)
-local playerOnionLabel = nil
-local doorLabels = {} -- Tabla para almacenar referencias a los contadores de puertas
+-- Referencias a los elementos REALES del juego (los de la foto)
+local gameOnionLabel = nil   -- PlayerGui...Onions.Onions
+local gameOnionValue = nil   -- IntValue/NumberValue (leaderstats u otro)
 
 -- ==========================================
--- 2. BÚSQUEDA INTELIGENTE DE ELEMENTOS
+-- 2. GUARDADO / CARGA CON ARCHIVO LOCAL (Delta)
 -- ==========================================
-local function findGuiElements()
-    -- 1. Buscar el contador principal del jugador
-    local pGui = player:FindFirstChild("PlayerGui")
-    if pGui then
-        local success, result = pcall(function()
-            return pGui:WaitForChild("gui"):WaitForChild("Main"):WaitForChild("Onions"):WaitForChild("Onions", 5)
-        end)
-        if success and result then
-            playerOnionLabel = result
-            print("[🧅 FOX] Contador principal encontrado:", playerOnionLabel:GetFullName())
-        else
-            warn("[🧅 FOX] No se pudo encontrar el contador principal del jugador.")
+local hasFileAPI = (type(writefile) == "function") and (type(readfile) == "function")
+
+local function saveData()
+    if not hasFileAPI then return end
+    local ok, err = pcall(function()
+        local payload = HttpService:JSONEncode({ onions = Stats.Onions })
+        writefile(SAVE_FILE, payload)
+    end)
+    if ok then
+        print("[💾 FOX] Guardado en archivo:", Stats.Onions, "cebollas")
+    else
+        warn("[💾 FOX] Error al guardar:", err)
+    end
+end
+
+local function loadData()
+    if not hasFileAPI then
+        warn("[📂 FOX] writefile/readfile no disponibles (¿estás en Delta?)")
+        return
+    end
+    local ok, content = pcall(function()
+        if isfile and isfile(SAVE_FILE) then
+            return readfile(SAVE_FILE)
+        end
+        return nil
+    end)
+    if ok and content and content ~= "" then
+        local pok, data = pcall(function() return HttpService:JSONDecode(content) end)
+        if pok and data and type(data.onions) == "number" then
+            Stats.Onions = data.onions
+            print("[📂 FOX] Cargado desde archivo:", Stats.Onions, "cebollas")
+            return
         end
     end
-    
-    -- 2. Buscar todos los contadores de puertas en Workspace
-    local lockedDoors = workspace:FindFirstChild("LockedDoors")
-    if lockedDoors then
-        for _, doorFolder in ipairs(lockedDoors:GetChildren()) do
-            if doorFolder:IsA("Folder") or doorFolder:IsA("Model") then
-                local surfaceGui = doorFolder:FindFirstChildWhichIsA("SurfaceGui")
-                if surfaceGui then
-                    local frame = surfaceGui:FindFirstChild("Frame")
-                    if frame then
-                        local countLabel = frame:FindFirstChild("Count")
-                        if countLabel and countLabel:IsA("TextLabel") then
-                            table.insert(doorLabels, {
-                                folder = doorFolder,
-                                label = countLabel,
-                                current = tonumber(countLabel.Text) or 0
-                            })
-                            print("[🚪 FOX] Contador de puerta encontrado:", doorFolder.Name, "| Ruta:", countLabel:GetFullName())
-                        end
+    print("[📂 FOX] Sin archivo previo, empezando en 0")
+end
+
+-- ==========================================
+-- 3. BUSCAR Y ENLAZAR LOS CONTADORES DEL JUEGO
+-- ==========================================
+local function linkGameElements()
+    -- 3a. El TextLabel de la foto: ...gui.Main.Onions.Onions
+    local pGui = player:FindFirstChild("PlayerGui")
+    if pGui then
+        local ok, lbl = pcall(function()
+            return pGui:WaitForChild("gui", 10)
+                       :WaitForChild("Main", 10)
+                       :WaitForChild("Onions", 10)
+                       :WaitForChild("Onions", 10)
+        end)
+        if ok and lbl then
+            gameOnionLabel = lbl
+            print("[🔗 FOX] Enlazado TextLabel del juego:", lbl:GetFullName())
+        end
+    end
+
+    -- 3b. Buscar cualquier Value relacionado (leaderstats, etc.)
+    local function scanValues(root)
+        if not root then return end
+        pcall(function()
+            for _, obj in ipairs(root:GetDescendants()) do
+                if (obj:IsA("IntValue") or obj:IsA("NumberValue")) then
+                    local n = string.lower(obj.Name)
+                    if string.find(n, "onion") or string.find(n, "cebolla") then
+                        gameOnionValue = obj
+                        print("[🔗 FOX] Enlazado Value del juego:", obj:GetFullName())
                     end
                 end
             end
-        end
+        end)
+    end
+    scanValues(player:FindFirstChild("leaderstats"))
+    scanValues(player:FindFirstChild("PlayerGui"))
+end
+
+-- Reintentar enlace por si la GUI del juego carga tarde
+task.spawn(function()
+    for i = 1, 30 do
+        if gameOnionLabel then break end
+        linkGameElements()
+        task.wait(1)
+    end
+end)
+linkGameElements()
+
+-- ==========================================
+-- 4. GUI PROPIA DE RESULTADOS (siempre se crea)
+-- ==========================================
+local TotalLbl, TimeLbl, StatusLbl
+
+local function createGUI()
+    local ok, gui = pcall(function()
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "FOX_OnionHUD"
+        sg.ResetOnSpawn = false
+        sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        pcall(function() sg.Parent = game:GetService("CoreGui") end)
+        if not sg.Parent then sg.Parent = player:WaitForChild("PlayerGui") end
+
+        local f = Instance.new("Frame")
+        f.Size = UDim2.new(0, 230, 0, 150)
+        f.Position = UDim2.new(0, 15, 0.5, -75)
+        f.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+        f.BorderSizePixel = 0
+        f.Parent = sg
+        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
+        local st = Instance.new("UIStroke", f)
+        st.Color = Color3.fromRGB(76, 175, 80); st.Thickness = 1.5
+
+        local t = Instance.new("TextLabel", f)
+        t.Size = UDim2.new(1,0,0,28); t.BackgroundTransparency = 1
+        t.Text = "🧅 SHREK LINE AUTOMATOR"
+        t.TextColor3 = Color3.fromRGB(76,175,80)
+        t.Font = Enum.Font.GothamBold; t.TextSize = 13
+
+        TotalLbl = Instance.new("TextLabel", f)
+        TotalLbl.Size = UDim2.new(1,-20,0,28); TotalLbl.Position = UDim2.new(0,10,0,32)
+        TotalLbl.BackgroundTransparency = 1
+        TotalLbl.TextColor3 = Color3.fromRGB(255,255,255)
+        TotalLbl.Font = Enum.Font.GothamMedium; TotalLbl.TextSize = 16
+        TotalLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        TimeLbl = Instance.new("TextLabel", f)
+        TimeLbl.Size = UDim2.new(1,-20,0,22); TimeLbl.Position = UDim2.new(0,10,0,62)
+        TimeLbl.BackgroundTransparency = 1
+        TimeLbl.TextColor3 = Color3.fromRGB(180,180,180)
+        TimeLbl.Font = Enum.Font.Gotham; TimeLbl.TextSize = 12
+        TimeLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        StatusLbl = Instance.new("TextLabel", f)
+        StatusLbl.Size = UDim2.new(1,-20,0,22); StatusLbl.Position = UDim2.new(0,10,0,86)
+        StatusLbl.BackgroundTransparency = 1
+        StatusLbl.TextColor3 = Color3.fromRGB(120,200,120)
+        StatusLbl.Font = Enum.Font.Gotham; StatusLbl.TextSize = 11
+        StatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        local btn = Instance.new("TextButton", f)
+        btn.Size = UDim2.new(1,-20,0,24); btn.Position = UDim2.new(0,10,1,-30)
+        btn.BackgroundColor3 = Color3.fromRGB(59,130,246)
+        btn.Text = "💾 GUARDAR AHORA"; btn.TextColor3 = Color3.fromRGB(255,255,255)
+        btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.BorderSizePixel = 0
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+        btn.MouseButton1Click:Connect(function()
+            saveData()
+            btn.Text = "✅ GUARDADO"
+            task.delay(1, function() if btn and btn.Parent then btn.Text = "💾 GUARDAR AHORA" end end)
+        end)
+
+        return sg
+    end)
+    if not ok then warn("[🧅 FOX] Error creando GUI:", gui) end
+end
+
+-- ==========================================
+-- 5. APLICAR VALOR A LOS CONTADORES DEL JUEGO
+-- ==========================================
+local function pushToGame()
+    local v = tostring(Stats.Onions)
+    if gameOnionLabel then
+        pcall(function() gameOnionLabel.Text = v end)
+    end
+    if gameOnionValue then
+        pcall(function() gameOnionValue.Value = Stats.Onions end)
     end
 end
 
--- Ejecutar búsqueda al inicio
-task.spawn(findGuiElements)
-
 -- ==========================================
--- 3. CREACIÓN DE GUI DE RESULTADOS MEJORADA
+-- 6. INICIO: CARGAR -> CREAR GUI -> APLICAR
 -- ==========================================
-local function CreateResultsGUI()
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "FOX_UltimateOnionHUD"
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    pcall(function() ScreenGui.Parent = game.CoreGui end)
-    if not ScreenGui.Parent then ScreenGui.Parent = player:WaitForChild("PlayerGui") end
+loadData()        -- 1º leer archivo
+createGUI()       -- 2º crear GUI (ya con Stats.Onions cargado)
+pushToGame()      -- 3º pintar los contadores del juego con lo guardado
 
-    local Frame = Instance.new("Frame")
-    Frame.Size = UDim2.new(0, 240, 0, 160)
-    Frame.Position = UDim2.new(0, 15, 0.5, -80)
-    Frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-    Frame.BorderSizePixel = 0
-    Frame.Parent = ScreenGui
-    Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 10)
-    
-    local Stroke = Instance.new("UIStroke")
-    Stroke.Color = Color3.fromRGB(76, 175, 80)
-    Stroke.Thickness = 1.5
-    Stroke.Parent = Frame
-
-    -- Título
-    local Title = Instance.new("TextLabel")
-    Title.Size = UDim2.new(1, 0, 0, 30)
-    Title.BackgroundTransparency = 1
-    Title.Text = "🧅 SHREK LINE AUTOMATOR"
-    Title.TextColor3 = Color3.fromRGB(76, 175, 80)
-    Title.Font = Enum.Font.GothamBold
-    Title.TextSize = 13
-    Title.Parent = Frame
-
-    -- Label: Cebollas Totales
-    local OnionLabel = Instance.new("TextLabel")
-    OnionLabel.Name = "TotalOnions"
-    OnionLabel.Size = UDim2.new(1, -20, 0, 28)
-    OnionLabel.Position = UDim2.new(0, 10, 0, 35)
-    OnionLabel.BackgroundTransparency = 1
-    OnionLabel.Text = "Cebollas Totales: 0"
-    OnionLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    OnionLabel.Font = Enum.Font.GothamMedium
-    OnionLabel.TextSize = 16
-    OnionLabel.TextXAlignment = Enum.TextXAlignment.Left
-    OnionLabel.Parent = Frame
-
-    -- Label: Tiempo
-    local TimeLabel = Instance.new("TextLabel")
-    TimeLabel.Name = "TimeElapsed"
-    TimeLabel.Size = UDim2.new(1, -20, 0, 22)
-    TimeLabel.Position = UDim2.new(0, 10, 0, 65)
-    TimeLabel.BackgroundTransparency = 1
-    TimeLabel.Text = "Tiempo Activo: 0s"
-    TimeLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-    TimeLabel.Font = Enum.Font.Gotham
-    TimeLabel.TextSize = 12
-    TimeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    TimeLabel.Parent = Frame
-
-    -- Label: Estado del Sistema
-    local StatusLabel = Instance.new("TextLabel")
-    StatusLabel.Name = "SystemStatus"
-    StatusLabel.Size = UDim2.new(1, -20, 0, 22)
-    StatusLabel.Position = UDim2.new(0, 10, 0, 90)
-    StatusLabel.BackgroundTransparency = 1
-    StatusLabel.Text = "Estado: 🟢 ACTIVO"
-    StatusLabel.TextColor3 = Color3.fromRGB(76, 175, 80)
-    StatusLabel.Font = Enum.Font.Gotham
-    StatusLabel.TextSize = 12
-    StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    StatusLabel.Parent = Frame
-
-    -- Label: Progreso de Puertas
-    local DoorProgressLabel = Instance.new("TextLabel")
-    DoorProgressLabel.Name = "DoorProgress"
-    DoorProgressLabel.Size = UDim2.new(1, -20, 0, 22)
-    DoorProgressLabel.Position = UDim2.new(0, 10, 0, 115)
-    DoorProgressLabel.BackgroundTransparency = 1
-    DoorProgressLabel.Text = "Puertas Desbloqueadas: 0/?"
-    DoorProgressLabel.TextColor3 = Color3.fromRGB(255, 165, 0)
-    DoorProgressLabel.Font = Enum.Font.Gotham
-    DoorProgressLabel.TextSize = 12
-    DoorProgressLabel.TextXAlignment = Enum.TextXAlignment.Left
-    DoorProgressLabel.Parent = Frame
-
-    return OnionLabel, TimeLabel, StatusLabel, DoorProgressLabel
+if TotalLbl then TotalLbl.Text = "Cebollas: " .. Stats.Onions end
+if StatusLbl then
+    StatusLbl.Text = hasFileAPI and "Estado: 🟢 ACTIVO (guardado local OK)"
+                                 or "Estado: 🟡 ACTIVO (sin guardado: falta Delta)"
 end
 
-local TotalLbl, TimeLbl, StatusLbl, DoorProgLbl = CreateResultsGUI()
-
 -- ==========================================
--- 4. LÓGICA PRINCIPAL DE AUTOMATIZACIÓN
+-- 7. BUCLE PRINCIPAL
 -- ==========================================
 RunService.Heartbeat:Connect(function()
     local now = tick()
-    
-    -- Actualizar tiempo siempre
-    local elapsed = math.floor(now - Stats.StartTime)
-    TimeLbl.Text = string.format("Tiempo Activo: %dm %ds", math.floor(elapsed / 60), elapsed % 60)
-    
-    -- Dar cebolla cada intervalo
+
+    -- Tiempo de sesión
+    if TimeLbl then
+        local e = math.floor(now - Stats.StartTime)
+        TimeLbl.Text = string.format("Sesión: %dm %ds", math.floor(e/60), e%60)
+    end
+
+    -- Forzar SIEMPRE los contadores del juego a nuestro valor
+    -- (así el juego no los resetea a 0 al cargar)
+    pushToGame()
+
+    -- +1 cebolla por segundo
     if now - Stats.LastUpdate >= ONION_INTERVAL then
-        Stats.OnionsCollected += 1
+        Stats.Onions += 1
         Stats.LastUpdate = now
-        
-        -- 1. Actualizar nuestra GUI de resultados
-        TotalLbl.Text = string.format("Cebollas Totales: %d", Stats.OnionsCollected)
-        
-        -- Animación flash en el contador
-        local flash = TweenService:Create(TotalLbl, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextColor3 = Color3.fromRGB(76, 175, 80)})
-        flash:Play()
-        task.delay(0.15, function()
-            TweenService:Create(TotalLbl, TweenInfo.new(0.3), {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
-        end)
-        
-        -- 2. Actualizar la GUI NATIVA del juego (si se encontró)
-        if playerOnionLabel then
-            playerOnionLabel.Text = tostring(Stats.OnionsCollected)
+
+        if TotalLbl then
+            TotalLbl.Text = "Cebollas: " .. Stats.Onions
+            local fl = TweenService:Create(TotalLbl, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(76,175,80)})
+            fl:Play()
+            task.delay(0.15, function()
+                if TotalLbl and TotalLbl.Parent then
+                    TweenService:Create(TotalLbl, TweenInfo.new(0.3), {TextColor3 = Color3.fromRGB(255,255,255)}):Play()
+                end
+            end)
         end
-        
-        -- 3. Actualizar contadores de puertas (simulación visual)
-        local unlockedCount = 0
-        for _, doorData in ipairs(doorLabels) do
-            -- Simular que cada puerta necesita X cebollas (ej: 10, 20, 30...)
-            -- Esto es una suposición basada en nombres como "2", "5", "10", "15"
-            local required = tonumber(doorData.folder.Name) or 999
-            if Stats.OnionsCollected >= required then
-                doorData.label.Text = "✓" -- O el texto que use el juego para "desbloqueado"
-                doorData.label.TextColor3 = Color3.fromRGB(0, 255, 0)
-                unlockedCount += 1
-            else
-                doorData.label.Text = tostring(required - Stats.OnionsCollected)
-                doorData.label.TextColor3 = Color3.fromRGB(255, 255, 255)
-            end
+
+        -- Guardado automático periódico
+        if now - Stats.LastSave >= SAVE_EVERY then
+            Stats.LastSave = now
+            saveData()
         end
-        DoorProgLbl.Text = string.format("Puertas Desbloqueadas: %d/%d", unlockedCount, #doorLabels)
     end
 end)
 
-print("[🧅 FOX] Ultimate Onion Automator cargado y listo.")
+-- Guardar al salir / morir / cerrar
+pcall(function()
+    game:BindToClose(saveData)
+end)
+player.AncestryChanged:Connect(function(_, parent)
+    if not parent then saveData() end
+end)
+-- Guardar también al respawn (por si acaso)
+player.CharacterAdded:Connect(function() task.wait(1) pushToGame() end)
+
+print("[🧅 FOX] Onion Automator cargado | Archivo:", SAVE_FILE, "| FileAPI:", tostring(hasFileAPI))
