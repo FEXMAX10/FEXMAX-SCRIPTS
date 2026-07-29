@@ -1,16 +1,16 @@
--- [FEXMAX SCRIPT] Shrek Line: Onion Automator + Local File Persistence
+-- [FEXMAX] Shrek Line: ONION AUTO-FARM - HEAD TAG FIX
 -- Ubicación: StarterPlayer > StarterPlayerScripts
--- Guarda en archivo local (Delta) y EDITA los contadores reales del juego
 
-local Players        = game:GetService("Players")
-local RunService     = game:GetService("RunService")
-local TweenService   = game:GetService("TweenService")
-local HttpService    = game:GetService("HttpService")
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
+local HttpService       = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local ONION_INTERVAL = 1
 local SAVE_FILE      = "FOX_ShrekLine_Onions.json"
-local SAVE_EVERY     = 10 -- segundos entre guardados automáticos
+local SAVE_EVERY     = 10
 
 -- ==========================================
 -- 1. ESTADO
@@ -22,55 +22,39 @@ local Stats = {
     LastSave    = tick(),
 }
 
--- Referencias a los elementos REALES del juego (los de la foto)
-local gameOnionLabel = nil   -- PlayerGui...Onions.Onions
-local gameOnionValue = nil   -- IntValue/NumberValue (leaderstats u otro)
+local gameOnionLabel = nil
+local headTagLabels  = {}  -- Array de TODOS los head tags encontrados
+local onionRemote    = nil
 
 -- ==========================================
--- 2. GUARDADO / CARGA CON ARCHIVO LOCAL (Delta)
+-- 2. GUARDADO / CARGA
 -- ==========================================
 local hasFileAPI = (type(writefile) == "function") and (type(readfile) == "function")
 
 local function saveData()
     if not hasFileAPI then return end
-    local ok, err = pcall(function()
-        local payload = HttpService:JSONEncode({ onions = Stats.Onions })
-        writefile(SAVE_FILE, payload)
+    pcall(function()
+        writefile(SAVE_FILE, HttpService:JSONEncode({ onions = Stats.Onions }))
     end)
-    if ok then
-        print("[💾 FOX] Guardado en archivo:", Stats.Onions, "cebollas")
-    else
-        warn("[💾 FOX] Error al guardar:", err)
-    end
 end
 
 local function loadData()
-    if not hasFileAPI then
-        warn("[📂 FOX] writefile/readfile no disponibles (¿estás en Delta?)")
-        return
-    end
+    if not hasFileAPI then return end
     local ok, content = pcall(function()
-        if isfile and isfile(SAVE_FILE) then
-            return readfile(SAVE_FILE)
-        end
-        return nil
+        if isfile and isfile(SAVE_FILE) then return readfile(SAVE_FILE) end
     end)
     if ok and content and content ~= "" then
         local pok, data = pcall(function() return HttpService:JSONDecode(content) end)
         if pok and data and type(data.onions) == "number" then
             Stats.Onions = data.onions
-            print("[📂 FOX] Cargado desde archivo:", Stats.Onions, "cebollas")
-            return
         end
     end
-    print("[📂 FOX] Sin archivo previo, empezando en 0")
 end
 
 -- ==========================================
--- 3. BUSCAR Y ENLAZAR LOS CONTADORES DEL JUEGO
+-- 3. BUSCAR ELEMENTOS
 -- ==========================================
-local function linkGameElements()
-    -- 3a. El TextLabel de la foto: ...gui.Main.Onions.Onions
+local function findGameLabel()
     local pGui = player:FindFirstChild("PlayerGui")
     if pGui then
         local ok, lbl = pcall(function()
@@ -79,133 +63,214 @@ local function linkGameElements()
                        :WaitForChild("Onions", 10)
                        :WaitForChild("Onions", 10)
         end)
-        if ok and lbl then
-            gameOnionLabel = lbl
-            print("[🔗 FOX] Enlazado TextLabel del juego:", lbl:GetFullName())
+        if ok and lbl then 
+            gameOnionLabel = lbl 
+            print("[ FEXMAX] GUI Label:", lbl:GetFullName())
         end
     end
+end
 
-    -- 3b. Buscar cualquier Value relacionado (leaderstats, etc.)
-    local function scanValues(root)
+local function findHeadTags()
+    -- LIMPIAR array anterior
+    headTagLabels = {}
+    
+    local char = player.Character
+    if not char then return end
+    
+    -- Buscar CUALQUIER BillboardGui/SurfaceGui en el personaje (sin filtrar por nombre)
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
+            -- Buscar TextLabels dentro
+            for _, child in ipairs(obj:GetDescendants()) do
+                if child:IsA("TextLabel") then
+                    table.insert(headTagLabels, child)
+                    print("[🏷️ FEXMAX] Head Tag encontrado:", child:GetFullName(), "| Texto:", child.Text)
+                end
+            end
+        end
+    end
+    
+    -- También buscar en el Workspace por si el tag está ahí con Adornee
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BillboardGui") and obj.Adornee then
+            -- Verificar si el Adornee es parte del personaje del jugador
+            local adornee = obj.Adornee
+            while adornee do
+                if adornee == char then
+                    for _, child in ipairs(obj:GetDescendants()) do
+                        if child:IsA("TextLabel") then
+                            table.insert(headTagLabels, child)
+                            print("[🏷️ FEXMAX] Head Tag en Workspace:", child:GetFullName())
+                        end
+                    end
+                    break
+                end
+                adornee = adornee.Parent
+            end
+        end
+    end
+    
+    print("[📊 FEXMAX] Total Head Tags encontrados:", #headTagLabels)
+end
+
+local function findOnionRemote()
+    local keywords = {"onion", "cebolla", "collect", "claim", "give", "add", "update", "head", "tag", "sync"}
+    local function scan(root)
         if not root then return end
         pcall(function()
             for _, obj in ipairs(root:GetDescendants()) do
-                if (obj:IsA("IntValue") or obj:IsA("NumberValue")) then
-                    local n = string.lower(obj.Name)
-                    if string.find(n, "onion") or string.find(n, "cebolla") then
-                        gameOnionValue = obj
-                        print("[🔗 FOX] Enlazado Value del juego:", obj:GetFullName())
+                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                    local name = string.lower(obj.Name)
+                    for _, kw in ipairs(keywords) do
+                        if string.find(name, kw) then
+                            onionRemote = obj
+                            print("[ FEXMAX] Remote:", obj:GetFullName())
+                            return
+                        end
                     end
                 end
             end
         end)
     end
-    scanValues(player:FindFirstChild("leaderstats"))
-    scanValues(player:FindFirstChild("PlayerGui"))
+    scan(ReplicatedStorage)
+    scan(workspace)
 end
 
--- Reintentar enlace por si la GUI del juego carga tarde
+local function linkAll()
+    findGameLabel()
+    findHeadTags()
+    if not onionRemote then findOnionRemote() end
+end
+
+-- Bucle de búsqueda continua
 task.spawn(function()
-    for i = 1, 30 do
-        if gameOnionLabel then break end
-        linkGameElements()
-        task.wait(1)
+    print("[🔍 FEXMAX] Buscando elementos...")
+    for i = 1, 100 do
+        linkAll()
+        if gameOnionLabel and #headTagLabels > 0 then 
+            print("[✅ FEXMAX] Elementos encontrados")
+            break 
+        end
+        task.wait(2)
     end
 end)
-linkGameElements()
+
+-- Re-buscar al respawn
+player.CharacterAdded:Connect(function()
+    print("[🔄 FEXMAX] Respawn, re-buscando...")
+    task.spawn(function()
+        for i = 1, 50 do
+            task.wait(1)
+            findHeadTags()
+            if #headTagLabels > 0 then break end
+        end
+    end)
+end)
 
 -- ==========================================
--- 4. GUI PROPIA DE RESULTADOS (siempre se crea)
+-- 4. GUI PROPIA
 -- ==========================================
 local TotalLbl, TimeLbl, StatusLbl
 
 local function createGUI()
-    local ok, gui = pcall(function()
-        local sg = Instance.new("ScreenGui")
-        sg.Name = "FEXMAX SHREK LINE SCRIPT"
-        sg.ResetOnSpawn = false
-        sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-        pcall(function() sg.Parent = game:GetService("CoreGui") end)
-        if not sg.Parent then sg.Parent = player:WaitForChild("PlayerGui") end
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "FEXMAX_SHREK_LINE_SCRIPT"
+    sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function() sg.Parent = game:GetService("CoreGui") end)
+    if not sg.Parent then sg.Parent = player:WaitForChild("PlayerGui") end
 
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(0, 230, 0, 150)
-        f.Position = UDim2.new(0, 15, 0.5, -75)
-        f.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-        f.BorderSizePixel = 0
-        f.Parent = sg
-        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
-        local st = Instance.new("UIStroke", f)
-        st.Color = Color3.fromRGB(76, 175, 80); st.Thickness = 1.5
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(0, 230, 0, 150)
+    f.Position = UDim2.new(0, 15, 0.5, -75)
+    f.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    f.BorderSizePixel = 0
+    f.Parent = sg
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
+    local st = Instance.new("UIStroke", f)
+    st.Color = Color3.fromRGB(76, 175, 80); st.Thickness = 1.5
 
-        local t = Instance.new("TextLabel", f)
-        t.Size = UDim2.new(1,0,0,28); t.BackgroundTransparency = 1
-        t.Text = "🧅 SHREK LINE FEXMAX AUTOMATOR"
-        t.TextColor3 = Color3.fromRGB(76,175,80)
-        t.Font = Enum.Font.GothamBold; t.TextSize = 13
+    local t = Instance.new("TextLabel", f)
+    t.Size = UDim2.new(1,0,0,28); t.BackgroundTransparency = 1
+    t.Text = "🧅 SHREK LINE FEXMAX AUTOMATOR"
+    t.TextColor3 = Color3.fromRGB(76,175,80)
+    t.Font = Enum.Font.GothamBold; t.TextSize = 13
 
-        TotalLbl = Instance.new("TextLabel", f)
-        TotalLbl.Size = UDim2.new(1,-20,0,28); TotalLbl.Position = UDim2.new(0,10,0,32)
-        TotalLbl.BackgroundTransparency = 1
-        TotalLbl.TextColor3 = Color3.fromRGB(255,255,255)
-        TotalLbl.Font = Enum.Font.GothamMedium; TotalLbl.TextSize = 16
-        TotalLbl.TextXAlignment = Enum.TextXAlignment.Left
+    TotalLbl = Instance.new("TextLabel", f)
+    TotalLbl.Size = UDim2.new(1,-20,0,28); TotalLbl.Position = UDim2.new(0,10,0,32)
+    TotalLbl.BackgroundTransparency = 1
+    TotalLbl.TextColor3 = Color3.fromRGB(255,255,255)
+    TotalLbl.Font = Enum.Font.GothamMedium; TotalLbl.TextSize = 16
+    TotalLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-        TimeLbl = Instance.new("TextLabel", f)
-        TimeLbl.Size = UDim2.new(1,-20,0,22); TimeLbl.Position = UDim2.new(0,10,0,62)
-        TimeLbl.BackgroundTransparency = 1
-        TimeLbl.TextColor3 = Color3.fromRGB(180,180,180)
-        TimeLbl.Font = Enum.Font.Gotham; TimeLbl.TextSize = 12
-        TimeLbl.TextXAlignment = Enum.TextXAlignment.Left
+    TimeLbl = Instance.new("TextLabel", f)
+    TimeLbl.Size = UDim2.new(1,-20,0,22); TimeLbl.Position = UDim2.new(0,10,0,62)
+    TimeLbl.BackgroundTransparency = 1
+    TimeLbl.TextColor3 = Color3.fromRGB(180,180,180)
+    TimeLbl.Font = Enum.Font.Gotham; TimeLbl.TextSize = 12
+    TimeLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-        StatusLbl = Instance.new("TextLabel", f)
-        StatusLbl.Size = UDim2.new(1,-20,0,22); StatusLbl.Position = UDim2.new(0,10,0,86)
-        StatusLbl.BackgroundTransparency = 1
-        StatusLbl.TextColor3 = Color3.fromRGB(120,200,120)
-        StatusLbl.Font = Enum.Font.Gotham; StatusLbl.TextSize = 11
-        StatusLbl.TextXAlignment = Enum.TextXAlignment.Left
+    StatusLbl = Instance.new("TextLabel", f)
+    StatusLbl.Size = UDim2.new(1,-20,0,22); StatusLbl.Position = UDim2.new(0,10,0,86)
+    StatusLbl.BackgroundTransparency = 1
+    StatusLbl.TextColor3 = Color3.fromRGB(120,200,120)
+    StatusLbl.Font = Enum.Font.Gotham; StatusLbl.TextSize = 11
+    StatusLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-        local btn = Instance.new("TextButton", f)
-        btn.Size = UDim2.new(1,-20,0,24); btn.Position = UDim2.new(0,10,1,-30)
-        btn.BackgroundColor3 = Color3.fromRGB(59,130,246)
-        btn.Text = "💾 GUARDAR AHORA"; btn.TextColor3 = Color3.fromRGB(255,255,255)
-        btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.BorderSizePixel = 0
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
-        btn.MouseButton1Click:Connect(function()
-            saveData()
-            btn.Text = "✅ GUARDADO"
-            task.delay(1, function() if btn and btn.Parent then btn.Text = "💾 GUARDAR AHORA" end end)
-        end)
-
-        return sg
+    local btn = Instance.new("TextButton", f)
+    btn.Size = UDim2.new(1,-20,0,24); btn.Position = UDim2.new(0,10,1,-30)
+    btn.BackgroundColor3 = Color3.fromRGB(59,130,246)
+    btn.Text = "💾 GUARDAR AHORA"; btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+    btn.MouseButton1Click:Connect(function()
+        saveData()
+        btn.Text = "✅ GUARDADO"
+        task.delay(1, function() if btn and btn.Parent then btn.Text = "💾 GUARDAR AHORA" end end)
     end)
-    if not ok then warn("[🧅 FEXMAX SCRIPT] Error creando GUI:", gui) end
 end
 
 -- ==========================================
--- 5. APLICAR VALOR A LOS CONTADORES DEL JUEGO
+-- 5. APLICAR VALORES
 -- ==========================================
 local function pushToGame()
     local v = tostring(Stats.Onions)
+    
+    -- GUI del juego
     if gameOnionLabel then
         pcall(function() gameOnionLabel.Text = v end)
     end
-    if gameOnionValue then
-        pcall(function() gameOnionValue.Value = Stats.Onions end)
+    
+    -- TODOS los Head Tags encontrados
+    for _, lbl in ipairs(headTagLabels) do
+        if lbl and lbl.Parent then
+            pcall(function() lbl.Text = v end)
+        end
+    end
+    
+    -- Remote al servidor
+    if onionRemote then
+        pcall(function()
+            if onionRemote:IsA("RemoteEvent") then
+                onionRemote:FireServer(Stats.Onions)
+            elseif onionRemote:IsA("RemoteFunction") then
+                onionRemote:InvokeServer(Stats.Onions)
+            end
+        end)
     end
 end
 
 -- ==========================================
--- 6. INICIO: CARGAR -> CREAR GUI -> APLICAR
+-- 6. INICIO
 -- ==========================================
-loadData()        -- 1º leer archivo
-createGUI()       -- 2º crear GUI (ya con Stats.Onions cargado)
-pushToGame()      -- 3º pintar los contadores del juego con lo guardado
+loadData()
+createGUI()
+linkAll()
+pushToGame()
 
 if TotalLbl then TotalLbl.Text = "Cebollas: " .. Stats.Onions end
 if StatusLbl then
-    StatusLbl.Text = hasFileAPI and "Estado: 🟢 ACTIVO (guardado local OK)"
-                                 or "Estado: 🟡 ACTIVO (sin guardado: falta Delta)"
+    StatusLbl.Text = hasFileAPI and "Estado: 🟢 ACTIVO (guardado local OK)" or "Estado: 🟡 ACTIVO (sin guardado)"
 end
 
 -- ==========================================
@@ -214,17 +279,13 @@ end
 RunService.Heartbeat:Connect(function()
     local now = tick()
 
-    -- Tiempo de sesión
     if TimeLbl then
         local e = math.floor(now - Stats.StartTime)
         TimeLbl.Text = string.format("Sesión: %dm %ds", math.floor(e/60), e%60)
     end
 
-    -- Forzar SIEMPRE los contadores del juego a nuestro valor
-    -- (así el juego no los resetea a 0 al cargar)
     pushToGame()
 
-    -- +1 cebolla por segundo
     if now - Stats.LastUpdate >= ONION_INTERVAL then
         Stats.Onions += 1
         Stats.LastUpdate = now
@@ -240,7 +301,6 @@ RunService.Heartbeat:Connect(function()
             end)
         end
 
-        -- Guardado automático periódico
         if now - Stats.LastSave >= SAVE_EVERY then
             Stats.LastSave = now
             saveData()
@@ -248,14 +308,12 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Guardar al salir / morir / cerrar
-pcall(function()
-    game:BindToClose(saveData)
-end)
+-- ==========================================
+-- 8. GUARDADO AL SALIR
+-- ==========================================
+pcall(function() game:BindToClose(saveData) end)
 player.AncestryChanged:Connect(function(_, parent)
     if not parent then saveData() end
 end)
--- Guardar también al respawn (por si acaso)
-player.CharacterAdded:Connect(function() task.wait(1) pushToGame() end)
 
-print("[🧅 FEXMAX] Onion Automator cargado | Archivo:", SAVE_FILE, "| FileAPI:", tostring(hasFileAPI))
+print("[🧅 FEXMAX] Script cargado. Cebollas:", Stats.Onions)
