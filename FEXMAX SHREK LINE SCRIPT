@@ -1,5 +1,6 @@
--- [FEXMAX] Shrek Line: ONION AUTO-FARM - HEAD TAG FIX
+-- [FEXMAX] Shrek Line: DINERO REAL + AUTO-FARM
 -- Ubicación: StarterPlayer > StarterPlayerScripts
+-- Modifica el Value REAL del dinero para que el juego lo use
 
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
@@ -23,7 +24,11 @@ local Stats = {
 }
 
 local gameOnionLabel = nil
-local headTagLabels  = {}  -- Array de TODOS los head tags encontrados
+local moneyLabel     = nil
+local moneyValue     = nil   -- Value REAL del dinero (IntValue/NumberValue)
+local baseMoney      = 0
+local multiplierLabel = nil
+local headTagLabels  = {}
 local onionRemote    = nil
 
 -- ==========================================
@@ -34,7 +39,10 @@ local hasFileAPI = (type(writefile) == "function") and (type(readfile) == "funct
 local function saveData()
     if not hasFileAPI then return end
     pcall(function()
-        writefile(SAVE_FILE, HttpService:JSONEncode({ onions = Stats.Onions }))
+        writefile(SAVE_FILE, HttpService:JSONEncode({ 
+            onions = Stats.Onions, 
+            baseMoney = baseMoney 
+        }))
     end)
 end
 
@@ -45,76 +53,151 @@ local function loadData()
     end)
     if ok and content and content ~= "" then
         local pok, data = pcall(function() return HttpService:JSONDecode(content) end)
-        if pok and data and type(data.onions) == "number" then
-            Stats.Onions = data.onions
+        if pok and data then
+            if type(data.onions) == "number" then Stats.Onions = data.onions end
+            if type(data.baseMoney) == "number" then baseMoney = data.baseMoney end
         end
     end
 end
 
 -- ==========================================
--- 3. BUSCAR ELEMENTOS
+-- 3. CALCULAR MULTIPLICADOR
 -- ==========================================
-local function findGameLabel()
+local function calculateMultiplier(onions)
+    return 1 + math.floor(onions / 10)
+end
+
+local function formatMultiplier(mult)
+    return string.format("%.2fx", mult)
+end
+
+-- ==========================================
+-- 4. FORMATEAR DINERO
+-- ==========================================
+local function formatMoney(amount)
+    if amount >= 1000000 then
+        return "$" .. string.format("%.2fM", amount / 1000000)
+    elseif amount >= 1000 then
+        return "$" .. string.format("%.2fk", amount / 1000)
+    else
+        return "$" .. tostring(math.floor(amount))
+    end
+end
+
+-- ==========================================
+-- 5. BUSCAR ELEMENTOS (AHORA BUSCA MONEY VALUE REAL)
+-- ==========================================
+local function findGameLabels()
     local pGui = player:FindFirstChild("PlayerGui")
-    if pGui then
-        local ok, lbl = pcall(function()
-            return pGui:WaitForChild("gui", 10)
-                       :WaitForChild("Main", 10)
-                       :WaitForChild("Onions", 10)
-                       :WaitForChild("Onions", 10)
-        end)
-        if ok and lbl then 
-            gameOnionLabel = lbl 
-            print("[ FEXMAX] GUI Label:", lbl:GetFullName())
+    if not pGui then return end
+    
+    -- Buscar TextLabels
+    pcall(function()
+        for _, screenGui in ipairs(pGui:GetChildren()) do
+            if screenGui:IsA("ScreenGui") then
+                for _, obj in ipairs(screenGui:GetDescendants()) do
+                    if obj:IsA("TextLabel") then
+                        local text = obj.Text or ""
+                        
+                        -- TextLabel de cebollas
+                        if string.find(obj:GetFullName(), "Onions.Onions") then
+                            gameOnionLabel = obj
+                            print("[ FEXMAX] GUI Cebollas:", obj:GetFullName())
+                        end
+                        
+                        -- TextLabel del dinero principal
+                        if string.find(text, "^%$") and not string.find(text, "R%$") and not moneyLabel then
+                            moneyLabel = obj
+                            print("[ FEXMAX] GUI Dinero:", obj:GetFullName(), "| Texto:", text)
+                        end
+                        
+                        -- TextLabel del multiplicador
+                        local lower = string.lower(text)
+                        if string.find(lower, "x") and (string.find(lower, "multiplicador") or string.find(lower, "multiplier")) then
+                            if not multiplierLabel then
+                                multiplierLabel = obj
+                                print("[ FEXMAX] Multiplicador:", obj:GetFullName())
+                            end
+                        end
+                    end
+                end
+            end
         end
+    end)
+    
+    -- ==========================================
+    -- BUSCAR VALUE REAL DEL DINERO
+    -- ==========================================
+    local moneyKeywords = {"money", "cash", "dinero", "coins", "oro", "gold", "robux", "r$"}
+    
+    -- En leaderstats
+    local ls = player:FindFirstChild("leaderstats")
+    if ls then
+        for _, obj in ipairs(ls:GetChildren()) do
+            if obj:IsA("IntValue") or obj:IsA("NumberValue") then
+                local name = string.lower(obj.Name)
+                for _, kw in ipairs(moneyKeywords) do
+                    if string.find(name, kw) then
+                        moneyValue = obj
+                        print("[✅ FEXMAX] MONEY VALUE REAL:", obj:GetFullName(), "| Valor:", obj.Value)
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    -- En el jugador directamente
+    for _, obj in ipairs(player:GetChildren()) do
+        if obj:IsA("IntValue") or obj:IsA("NumberValue") then
+            local name = string.lower(obj.Name)
+            for _, kw in ipairs(moneyKeywords) do
+                if string.find(name, kw) then
+                    moneyValue = obj
+                    print("[✅ FEXMAX] MONEY VALUE en Player:", obj:GetFullName(), "| Valor:", obj.Value)
+                    break
+                end
+            end
+        end
+    end
+    
+    -- En PlayerGui (buscar Values)
+    if pGui then
+        pcall(function()
+            for _, obj in ipairs(pGui:GetDescendants()) do
+                if obj:IsA("IntValue") or obj:IsA("NumberValue") then
+                    local name = string.lower(obj.Name)
+                    for _, kw in ipairs(moneyKeywords) do
+                        if string.find(name, kw) then
+                            moneyValue = obj
+                            print("[✅ FEXMAX] MONEY VALUE en GUI:", obj:GetFullName(), "| Valor:", obj.Value)
+                            break
+                        end
+                    end
+                end
+            end
+        end)
     end
 end
 
 local function findHeadTags()
-    -- LIMPIAR array anterior
     headTagLabels = {}
-    
     local char = player.Character
     if not char then return end
     
-    -- Buscar CUALQUIER BillboardGui/SurfaceGui en el personaje (sin filtrar por nombre)
     for _, obj in ipairs(char:GetDescendants()) do
         if obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
-            -- Buscar TextLabels dentro
             for _, child in ipairs(obj:GetDescendants()) do
                 if child:IsA("TextLabel") then
                     table.insert(headTagLabels, child)
-                    print("[🏷️ FEXMAX] Head Tag encontrado:", child:GetFullName(), "| Texto:", child.Text)
                 end
             end
         end
     end
-    
-    -- También buscar en el Workspace por si el tag está ahí con Adornee
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("BillboardGui") and obj.Adornee then
-            -- Verificar si el Adornee es parte del personaje del jugador
-            local adornee = obj.Adornee
-            while adornee do
-                if adornee == char then
-                    for _, child in ipairs(obj:GetDescendants()) do
-                        if child:IsA("TextLabel") then
-                            table.insert(headTagLabels, child)
-                            print("[🏷️ FEXMAX] Head Tag en Workspace:", child:GetFullName())
-                        end
-                    end
-                    break
-                end
-                adornee = adornee.Parent
-            end
-        end
-    end
-    
-    print("[📊 FEXMAX] Total Head Tags encontrados:", #headTagLabels)
 end
 
 local function findOnionRemote()
-    local keywords = {"onion", "cebolla", "collect", "claim", "give", "add", "update", "head", "tag", "sync"}
+    local keywords = {"onion", "cebolla", "collect", "claim", "give", "add"}
     local function scan(root)
         if not root then return end
         pcall(function()
@@ -124,7 +207,6 @@ local function findOnionRemote()
                     for _, kw in ipairs(keywords) do
                         if string.find(name, kw) then
                             onionRemote = obj
-                            print("[ FEXMAX] Remote:", obj:GetFullName())
                             return
                         end
                     end
@@ -137,17 +219,16 @@ local function findOnionRemote()
 end
 
 local function linkAll()
-    findGameLabel()
+    findGameLabels()
     findHeadTags()
     if not onionRemote then findOnionRemote() end
 end
 
--- Bucle de búsqueda continua
 task.spawn(function()
-    print("[🔍 FEXMAX] Buscando elementos...")
+    print("[ FEXMAX] Buscando elementos...")
     for i = 1, 100 do
         linkAll()
-        if gameOnionLabel and #headTagLabels > 0 then 
+        if gameOnionLabel and moneyLabel and #headTagLabels > 0 then 
             print("[✅ FEXMAX] Elementos encontrados")
             break 
         end
@@ -155,9 +236,7 @@ task.spawn(function()
     end
 end)
 
--- Re-buscar al respawn
 player.CharacterAdded:Connect(function()
-    print("[🔄 FEXMAX] Respawn, re-buscando...")
     task.spawn(function()
         for i = 1, 50 do
             task.wait(1)
@@ -168,9 +247,9 @@ player.CharacterAdded:Connect(function()
 end)
 
 -- ==========================================
--- 4. GUI PROPIA
+-- 6. GUI PROPIA
 -- ==========================================
-local TotalLbl, TimeLbl, StatusLbl
+local TotalLbl, TimeLbl, StatusLbl, MultLbl, MoneyLbl
 
 local function createGUI()
     local sg = Instance.new("ScreenGui")
@@ -181,8 +260,8 @@ local function createGUI()
     if not sg.Parent then sg.Parent = player:WaitForChild("PlayerGui") end
 
     local f = Instance.new("Frame")
-    f.Size = UDim2.new(0, 230, 0, 150)
-    f.Position = UDim2.new(0, 15, 0.5, -75)
+    f.Size = UDim2.new(0, 230, 0, 200)
+    f.Position = UDim2.new(0, 15, 0.5, -100)
     f.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
     f.BorderSizePixel = 0
     f.Parent = sg
@@ -192,26 +271,40 @@ local function createGUI()
 
     local t = Instance.new("TextLabel", f)
     t.Size = UDim2.new(1,0,0,28); t.BackgroundTransparency = 1
-    t.Text = "🧅 SHREK LINE FEXMAX AUTOMATOR"
+    t.Text = " SHREK LINE FEXMAX AUTOMATOR"
     t.TextColor3 = Color3.fromRGB(76,175,80)
     t.Font = Enum.Font.GothamBold; t.TextSize = 13
 
     TotalLbl = Instance.new("TextLabel", f)
-    TotalLbl.Size = UDim2.new(1,-20,0,28); TotalLbl.Position = UDim2.new(0,10,0,32)
+    TotalLbl.Size = UDim2.new(1,-20,0,24); TotalLbl.Position = UDim2.new(0,10,0,32)
     TotalLbl.BackgroundTransparency = 1
     TotalLbl.TextColor3 = Color3.fromRGB(255,255,255)
-    TotalLbl.Font = Enum.Font.GothamMedium; TotalLbl.TextSize = 16
+    TotalLbl.Font = Enum.Font.GothamMedium; TotalLbl.TextSize = 14
     TotalLbl.TextXAlignment = Enum.TextXAlignment.Left
 
+    MoneyLbl = Instance.new("TextLabel", f)
+    MoneyLbl.Size = UDim2.new(1,-20,0,24); MoneyLbl.Position = UDim2.new(0,10,0,58)
+    MoneyLbl.BackgroundTransparency = 1
+    MoneyLbl.TextColor3 = Color3.fromRGB(120,255,120)
+    MoneyLbl.Font = Enum.Font.GothamBold; MoneyLbl.TextSize = 14
+    MoneyLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    MultLbl = Instance.new("TextLabel", f)
+    MultLbl.Size = UDim2.new(1,-20,0,22); MultLbl.Position = UDim2.new(0,10,0,84)
+    MultLbl.BackgroundTransparency = 1
+    MultLbl.TextColor3 = Color3.fromRGB(255,200,0)
+    MultLbl.Font = Enum.Font.GothamBold; MultLbl.TextSize = 13
+    MultLbl.TextXAlignment = Enum.TextXAlignment.Left
+
     TimeLbl = Instance.new("TextLabel", f)
-    TimeLbl.Size = UDim2.new(1,-20,0,22); TimeLbl.Position = UDim2.new(0,10,0,62)
+    TimeLbl.Size = UDim2.new(1,-20,0,22); TimeLbl.Position = UDim2.new(0,10,0,108)
     TimeLbl.BackgroundTransparency = 1
     TimeLbl.TextColor3 = Color3.fromRGB(180,180,180)
     TimeLbl.Font = Enum.Font.Gotham; TimeLbl.TextSize = 12
     TimeLbl.TextXAlignment = Enum.TextXAlignment.Left
 
     StatusLbl = Instance.new("TextLabel", f)
-    StatusLbl.Size = UDim2.new(1,-20,0,22); StatusLbl.Position = UDim2.new(0,10,0,86)
+    StatusLbl.Size = UDim2.new(1,-20,0,22); StatusLbl.Position = UDim2.new(0,10,0,132)
     StatusLbl.BackgroundTransparency = 1
     StatusLbl.TextColor3 = Color3.fromRGB(120,200,120)
     StatusLbl.Font = Enum.Font.Gotham; StatusLbl.TextSize = 11
@@ -231,17 +324,42 @@ local function createGUI()
 end
 
 -- ==========================================
--- 5. APLICAR VALORES
+-- 7. APLICAR VALORES (AHORA MODIFICA EL VALUE REAL)
 -- ==========================================
 local function pushToGame()
     local v = tostring(Stats.Onions)
+    local mult = calculateMultiplier(Stats.Onions)
+    local multText = formatMultiplier(mult)
     
-    -- GUI del juego
+    -- GUI cebollas
     if gameOnionLabel then
         pcall(function() gameOnionLabel.Text = v end)
     end
     
-    -- TODOS los Head Tags encontrados
+    -- GUI dinero
+    if moneyLabel then
+        pcall(function() moneyLabel.Text = formatMoney(baseMoney) end)
+    end
+    
+    -- ==========================================
+    -- VALUE REAL DEL DINERO (esto es lo que el juego usa)
+    -- ==========================================
+    if moneyValue then
+        pcall(function()
+            if moneyValue:IsA("IntValue") then
+                moneyValue.Value = baseMoney
+            elseif moneyValue:IsA("NumberValue") then
+                moneyValue.Value = baseMoney
+            end
+        end)
+    end
+    
+    -- GUI multiplicador
+    if multiplierLabel then
+        pcall(function() multiplierLabel.Text = multText end)
+    end
+    
+    -- Head Tags
     for _, lbl in ipairs(headTagLabels) do
         if lbl and lbl.Parent then
             pcall(function() lbl.Text = v end)
@@ -261,20 +379,29 @@ local function pushToGame()
 end
 
 -- ==========================================
--- 6. INICIO
+-- 8. INICIO
 -- ==========================================
 loadData()
 createGUI()
 linkAll()
+
+task.wait(3)
+if moneyLabel then
+    baseMoney = 0  -- Empezar desde 0 o desde el valor guardado
+    print("[💰 FEXMAX] Dinero base:", baseMoney)
+end
+
 pushToGame()
 
 if TotalLbl then TotalLbl.Text = "Cebollas: " .. Stats.Onions end
+if MoneyLbl then MoneyLbl.Text = "Dinero: " .. formatMoney(baseMoney) end
+if MultLbl then MultLbl.Text = "Multiplicador: " .. formatMultiplier(calculateMultiplier(Stats.Onions)) end
 if StatusLbl then
-    StatusLbl.Text = hasFileAPI and "Estado: 🟢 ACTIVO (guardado local OK)" or "Estado: 🟡 ACTIVO (sin guardado)"
+    StatusLbl.Text = hasFileAPI and "Estado: 🟢 ACTIVO" or "Estado: 🟡 ACTIVO"
 end
 
 -- ==========================================
--- 7. BUCLE PRINCIPAL
+-- 9. BUCLE PRINCIPAL (9999 × MULTIPLICADOR CADA SEGUNDO)
 -- ==========================================
 RunService.Heartbeat:Connect(function()
     local now = tick()
@@ -290,6 +417,11 @@ RunService.Heartbeat:Connect(function()
         Stats.Onions += 1
         Stats.LastUpdate = now
 
+        local mult = calculateMultiplier(Stats.Onions)
+        local earnings = 9999 * mult  -- 9999 × multiplicador
+        
+        baseMoney = baseMoney + earnings
+        
         if TotalLbl then
             TotalLbl.Text = "Cebollas: " .. Stats.Onions
             local fl = TweenService:Create(TotalLbl, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(76,175,80)})
@@ -300,6 +432,14 @@ RunService.Heartbeat:Connect(function()
                 end
             end)
         end
+        
+        if MoneyLbl then
+            MoneyLbl.Text = "Dinero: " .. formatMoney(baseMoney)
+        end
+        
+        if MultLbl then
+            MultLbl.Text = "Multiplicador: " .. formatMultiplier(mult)
+        end
 
         if now - Stats.LastSave >= SAVE_EVERY then
             Stats.LastSave = now
@@ -309,11 +449,12 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ==========================================
--- 8. GUARDADO AL SALIR
+-- 10. GUARDADO AL SALIR
 -- ==========================================
 pcall(function() game:BindToClose(saveData) end)
 player.AncestryChanged:Connect(function(_, parent)
     if not parent then saveData() end
 end)
 
-print("[🧅 FEXMAX] Script cargado. Cebollas:", Stats.Onions)
+print("[🧅 FEXMAX] Script cargado. Cebollas:", Stats.Onions, "| Dinero:", baseMoney)
+print("[ FEXMAX] MoneyValue:", moneyValue and moneyValue:GetFullName() or "NO ENCONTRADO")
